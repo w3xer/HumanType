@@ -17,6 +17,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.LinearLayout
@@ -126,7 +127,21 @@ class OverlayService : Service() {
         val settings = cell("⚙")
         val close = cell("✕")
 
-        listOf(drag, playBtn, statusView, keyboard, settings, close).forEach { root.addView(it) }
+        // Порядок сверху вниз: ▶, статус, ⌨, ⚙, ✕ (виден только в свёрнутом виде), ✥ (внизу)
+        listOf(playBtn, statusView, keyboard, settings, close, drag).forEach { root.addView(it) }
+
+        // В свёрнутом виде остаются только ✕ и ✥. Печать при этом продолжается:
+        // она живёт в TypingService и от панели не зависит.
+        val hideWhenCollapsed = listOf(playBtn, statusView, keyboard, settings)
+        // высота, которую даёт скрытие: ▶ + статус + ⌨ + ⚙ минус ✕
+        val collapseShift = dp(52 + 24 + 52 + 52 - 52)
+        var collapsed = prefs.getBoolean("panel_collapsed", false)
+
+        fun applyCollapsed() {
+            hideWhenCollapsed.forEach { it.visibility = if (collapsed) View.GONE else View.VISIBLE }
+            close.visibility = if (collapsed) View.VISIBLE else View.GONE
+        }
+        applyCollapsed()
 
         params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -142,26 +157,46 @@ class OverlayService : Service() {
             y = prefs.getInt("panel_y", dp(200))
         }
 
-        // перетаскивание за ✥
+        // ✥: перетащить; короткое нажатие без движения — свернуть/развернуть панель
+        val slop = ViewConfiguration.get(this).scaledTouchSlop
         var startX = 0
         var startY = 0
         var touchX = 0f
         var touchY = 0f
+        var moved = false
         drag.setOnTouchListener { _, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
                     startX = params.x; startY = params.y
                     touchX = e.rawX; touchY = e.rawY
+                    moved = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    params.x = startX + (e.rawX - touchX).toInt()
-                    params.y = startY + (e.rawY - touchY).toInt()
-                    wm.updateViewLayout(root, params)
+                    val dx = e.rawX - touchX
+                    val dy = e.rawY - touchY
+                    if (!moved && (Math.abs(dx) > slop || Math.abs(dy) > slop)) moved = true
+                    if (moved) {
+                        params.x = startX + dx.toInt()
+                        params.y = startY + dy.toInt()
+                        wm.updateViewLayout(root, params)
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    prefs.edit().putInt("panel_x", params.x).putInt("panel_y", params.y).apply()
+                    if (!moved) {
+                        // ✥ закреплена внизу панели, поэтому сдвигаем окно так, чтобы она не прыгала
+                        collapsed = !collapsed
+                        params.y = if (collapsed) params.y + collapseShift
+                        else (params.y - collapseShift).coerceAtLeast(0)
+                        applyCollapsed()
+                        wm.updateViewLayout(root, params)
+                    }
+                    prefs.edit()
+                        .putInt("panel_x", params.x)
+                        .putInt("panel_y", params.y)
+                        .putBoolean("panel_collapsed", collapsed)
+                        .apply()
                     true
                 }
                 else -> false

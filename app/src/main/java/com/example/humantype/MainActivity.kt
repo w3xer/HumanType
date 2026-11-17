@@ -36,7 +36,7 @@ class MainActivity : AppCompatActivity() {
 
         val prefs = getSharedPreferences("humantype", MODE_PRIVATE)
         textInput.setText(prefs.getString("text", ""))
-        seekSpeed.progress = prefs.getInt("speed", 120) - 30
+        seekSpeed.progress = prefs.getInt("speed", 120).coerceAtLeast(10) - 10
         updateLabel()
 
         seekSpeed.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -105,13 +105,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateLabel() {
-        speedLabel.text = "Задержка между символами: ~${seekSpeed.progress + 30} мс"
+        speedLabel.text = "Задержка между символами: ~${seekSpeed.progress + 10} мс"
     }
 
     private fun save() {
         getSharedPreferences("humantype", MODE_PRIVATE).edit()
             .putString("text", textInput.text.toString())
-            .putInt("speed", seekSpeed.progress + 30)
+            .putInt("speed", seekSpeed.progress + 10)
             .apply()
     }
 }

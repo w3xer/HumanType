@@ -109,6 +109,7 @@ class TypingService : InputMethodService() {
                     @Suppress("DEPRECATION")
                     switchToPreviousInputMethod()
                 }
+                else -> Unit
             }
         }
     }

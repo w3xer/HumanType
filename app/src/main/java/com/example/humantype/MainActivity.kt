@@ -1,7 +1,11 @@
 package com.example.humantype
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
@@ -9,13 +13,17 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var textInput: EditText
     private lateinit var speedLabel: TextView
     private lateinit var seekSpeed: SeekBar
+    private lateinit var setupStatus: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,6 +32,7 @@ class MainActivity : AppCompatActivity() {
         textInput = findViewById(R.id.text_input)
         speedLabel = findViewById(R.id.speed_label)
         seekSpeed = findViewById(R.id.seek_speed)
+        setupStatus = findViewById(R.id.setup_status)
 
         val prefs = getSharedPreferences("humantype", MODE_PRIVATE)
         textInput.setText(prefs.getString("text", ""))
@@ -36,19 +45,63 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(bar: SeekBar?) {}
         })
 
-        findViewById<Button>(R.id.btn_enable).setOnClickListener {
-            save()
-            startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+        findViewById<Button>(R.id.btn_panel).setOnClickListener { showPanel() }
+        findViewById<Button>(R.id.btn_hide).setOnClickListener {
+            startService(Intent(this, OverlayService::class.java).setAction(OverlayService.ACTION_STOP))
         }
-        findViewById<Button>(R.id.btn_pick).setOnClickListener {
-            save()
-            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
+
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateSetupStatus()
     }
 
     override fun onPause() {
         super.onPause()
         save()
+    }
+
+    /** Одна кнопка: сама ведёт по недостающим шагам, а когда всё готово — показывает панель. */
+    private fun showPanel() {
+        save()
+        when {
+            !Settings.canDrawOverlays(this) -> {
+                Toast.makeText(this, "Разрешите показ поверх других приложений", Toast.LENGTH_LONG).show()
+                startActivity(
+                    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                )
+            }
+            !isKeyboardEnabled() -> {
+                Toast.makeText(this, "Включите переключатель HumanType", Toast.LENGTH_LONG).show()
+                startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+            }
+            else -> {
+                ContextCompat.startForegroundService(this, Intent(this, OverlayService::class.java))
+                moveTaskToBack(true)
+            }
+        }
+    }
+
+    private fun isKeyboardEnabled(): Boolean =
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .enabledInputMethodList.any { it.packageName == packageName }
+
+    private fun isKeyboardSelected(): Boolean =
+        (Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: "")
+            .startsWith("$packageName/")
+
+    private fun updateSetupStatus() {
+        fun mark(ok: Boolean) = if (ok) "✓" else "✗"
+        setupStatus.text = "${mark(Settings.canDrawOverlays(this))} Показ поверх приложений\n" +
+            "${mark(isKeyboardEnabled())} Клавиатура HumanType включена\n" +
+            "${mark(isKeyboardSelected())} Клавиатура выбрана (это делается кнопкой ⌨ на панели)"
     }
 
     private fun updateLabel() {

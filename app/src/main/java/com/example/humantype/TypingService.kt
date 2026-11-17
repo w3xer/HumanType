@@ -3,36 +3,47 @@ package com.example.humantype
 import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
-import android.view.View
-import android.view.inputmethod.InputMethodManager
-import android.widget.Button
-import android.widget.TextView
+import android.view.KeyEvent
 import kotlin.random.Random
 
+/**
+ * "Движок" печати. Это клавиатура без собственного вида: ничего не показывает на экране,
+ * а только держит соединение с полем ввода и вставляет туда символы.
+ * Управляется плавающей панелью (OverlayService).
+ */
 class TypingService : InputMethodService() {
+
+    companion object {
+        @Volatile
+        var instance: TypingService? = null
+
+        /** (идёт ли печать, текст статуса) */
+        var listener: ((Boolean, String) -> Unit)? = null
+    }
 
     private val handler = Handler(Looper.getMainLooper())
     private var text = ""
     private var index = 0
     private var speed = 120
     private var running = false
-    private lateinit var status: TextView
 
-    override fun onCreateInputView(): View {
-        val view = layoutInflater.inflate(R.layout.keyboard_view, null)
-        status = view.findViewById(R.id.status)
-        view.findViewById<Button>(R.id.btn_start).setOnClickListener { start() }
-        view.findViewById<Button>(R.id.btn_stop).setOnClickListener { stop("Остановлено") }
-        view.findViewById<Button>(R.id.btn_switch).setOnClickListener {
-            stop("Остановлено")
-            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
-        }
-        return view
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
     }
+
+    override fun onDestroy() {
+        stopTyping("")
+        instance = null
+        super.onDestroy()
+    }
+
+    // Никакой клавиатуры на экране — только плавающая панель.
+    override fun onEvaluateInputViewShown(): Boolean = false
 
     override fun onFinishInput() {
         super.onFinishInput()
-        stop("Остановлено")
+        if (running) stopTyping("Поле закрыто, пауза")
     }
 
     private val step = object : Runnable {
@@ -40,40 +51,69 @@ class TypingService : InputMethodService() {
             if (!running) return
             val ic = currentInputConnection
             if (ic == null) {
-                stop("Нет поля ввода")
+                stopTyping("Нажмите на поле")
                 return
             }
             if (index >= text.length) {
-                stop("Готово")
+                index = 0
+                stopTyping("Готово")
                 return
             }
             val len = Character.charCount(text.codePointAt(index))
             val chunk = text.substring(index, index + len)
-            ic.commitText(chunk, 1)
+            if (chunk == "\n") {
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+            } else {
+                ic.commitText(chunk, 1)
+            }
             index += len
-            status.text = "Печатаю: $index / ${text.length}"
+            publish("${index * 100 / text.length}%")
             handler.postDelayed(this, nextDelay(chunk))
         }
     }
 
-    private fun start() {
+    /** ▶ / ■ : старт (с места остановки) или пауза. */
+    fun toggle() {
+        if (running) stopTyping("Пауза ${progress()}") else begin(restart = false)
+    }
+
+    /** Печать заново с самого начала. */
+    fun restart() {
+        stopTyping("")
+        begin(restart = true)
+    }
+
+    private fun begin(restart: Boolean) {
         if (running) return
         val prefs = getSharedPreferences("humantype", MODE_PRIVATE)
-        text = prefs.getString("text", "") ?: ""
+        val newText = (prefs.getString("text", "") ?: "").replace("\r\n", "\n")
         speed = prefs.getInt("speed", 120)
-        if (text.isEmpty()) {
-            status.text = "Сначала вставьте текст в приложении"
+        if (newText.isEmpty()) {
+            publish("Нет текста")
             return
         }
-        index = 0
+        if (restart || newText != text || index >= newText.length) index = 0
+        text = newText
+        if (currentInputConnection == null) {
+            publish("Нажмите на поле")
+            return
+        }
         running = true
         handler.post(step)
     }
 
-    private fun stop(message: String) {
+    private fun stopTyping(message: String) {
         running = false
         handler.removeCallbacks(step)
-        if (::status.isInitialized) status.text = message
+        if (message.isNotEmpty()) publish(message)
+    }
+
+    private fun progress(): String =
+        if (text.isEmpty()) "" else "${index * 100 / text.length}%"
+
+    private fun publish(message: String) {
+        listener?.invoke(running, message)
     }
 
     private fun nextDelay(ch: String): Long {

@@ -1,13 +1,8 @@
 package com.example.humantype
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -22,14 +17,12 @@ import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.app.NotificationCompat
 
 /** Плавающая панель поверх всех приложений: ▶/■, смена клавиатуры, настройки, закрыть, перетаскивание. */
 class OverlayService : Service() {
 
     companion object {
         const val ACTION_STOP = "com.example.humantype.STOP_PANEL"
-        private const val CHANNEL_ID = "humantype_panel"
     }
 
     private lateinit var wm: WindowManager
@@ -45,8 +38,10 @@ class OverlayService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startAsForeground()
-        if (panel == null) showPanel()
+        if (panel == null) {
+            rememberPreviousKeyboard()
+            showPanel()
+        }
         return START_STICKY
     }
 
@@ -54,39 +49,10 @@ class OverlayService : Service() {
         TypingService.listener = null
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
+        // Панель закрыта (✕ или «Убрать панель»): печать прекращается,
+        // а выбранная клавиатура возвращается на прежнюю.
+        TypingService.instance?.onPanelClosed()
         super.onDestroy()
-    }
-
-    // ---------- уведомление (нужно, чтобы система не убивала панель) ----------
-
-    private fun startAsForeground() {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= 26) {
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Панель HumanType", NotificationManager.IMPORTANCE_LOW)
-            )
-        }
-        val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val close = PendingIntent.getService(
-            this, 1, Intent(this, OverlayService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_edit)
-            .setContentTitle("HumanType")
-            .setContentText("Панель печати активна")
-            .setContentIntent(open)
-            .addAction(0, "Закрыть панель", close)
-            .setOngoing(true)
-            .build()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(1, notification)
-        }
     }
 
     // ---------- панель ----------
@@ -131,7 +97,8 @@ class OverlayService : Service() {
         listOf(playBtn, statusView, keyboard, settings, close, drag).forEach { root.addView(it) }
 
         // В свёрнутом виде остаются только ✕ и ✥. Печать при этом продолжается:
-        // она живёт в TypingService и от панели не зависит.
+        // она живёт в TypingService и от панели не зависит. Останавливается она только
+        // когда панель закрыта совсем (см. onDestroy).
         val hideWhenCollapsed = listOf(playBtn, statusView, keyboard, settings)
         // высота, которую даёт скрытие: ▶ + статус + ⌨ + ⚙ минус ✕
         val collapseShift = dp(52 + 24 + 52 + 52 - 52)
@@ -232,9 +199,30 @@ class OverlayService : Service() {
         if (restart) engine.restart() else engine.toggle()
     }
 
+    /**
+     * Запоминаем клавиатуру, которая была выбрана до HumanType, чтобы вернуть её,
+     * когда панель закроется.
+     */
+    private fun rememberPreviousKeyboard() {
+        val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: ""
+        if (current.isNotEmpty() && !current.startsWith("$packageName/")) {
+            getSharedPreferences("humantype", MODE_PRIVATE).edit().putString("prev_ime", current).apply()
+        }
+    }
+
+    /**
+     * Окно выбора клавиатуры открывается через невидимую PickerActivity: у неё есть фокус окна,
+     * поэтому система не игнорирует вызов (из окна панели он срабатывал не всегда).
+     */
     private fun showPicker() {
-        runCatching {
-            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
+        rememberPreviousKeyboard()
+        val launched = runCatching {
+            startActivity(Intent(this, PickerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.isSuccess
+        if (!launched) {
+            runCatching {
+                (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
+            }
         }
     }
 }

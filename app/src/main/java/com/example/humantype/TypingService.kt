@@ -1,9 +1,12 @@
 package com.example.humantype
 
 import android.inputmethodservice.InputMethodService
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.KeyEvent
+import android.view.inputmethod.InputMethodManager
 import kotlin.random.Random
 
 /**
@@ -84,6 +87,32 @@ class TypingService : InputMethodService() {
         begin(restart = true)
     }
 
+    /**
+     * Панель закрыта: печать прекращается, а если сейчас выбрана клавиатура HumanType —
+     * возвращаем ту, что была выбрана до неё.
+     */
+    fun onPanelClosed() {
+        stopTyping("")
+        val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: ""
+        if (!current.startsWith("$packageName/")) return
+        val previous = getSharedPreferences("humantype", MODE_PRIVATE).getString("prev_ime", null)
+        runCatching {
+            when {
+                previous != null && Build.VERSION.SDK_INT >= 28 -> switchInputMethod(previous)
+                previous != null -> {
+                    @Suppress("DEPRECATION")
+                    (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                        .setInputMethod(window?.window?.attributes?.token, previous)
+                }
+                // прежняя клавиатура не запомнена (выбрали HumanType до этого обновления)
+                Build.VERSION.SDK_INT >= 28 -> {
+                    @Suppress("DEPRECATION")
+                    switchToPreviousInputMethod()
+                }
+            }
+        }
+    }
+
     private fun begin(restart: Boolean) {
         if (running) return
         val prefs = getSharedPreferences("humantype", MODE_PRIVATE)
@@ -118,11 +147,15 @@ class TypingService : InputMethodService() {
 
     private fun nextDelay(ch: String): Long {
         var d = speed * Random.nextDouble(0.6, 1.4)
+        // «Человеческие» паузы на знаках препинания и случайные задумчивости уменьшаются вместе
+        // с задержкой: на 120 мс и больше они прежние, на малых значениях (вплоть до 1 мс)
+        // не мешают быстрой печати.
+        val pauseScale = (speed / 120.0).coerceAtMost(1.0)
         when (ch) {
             " " -> d += speed * 0.5
-            ".", ",", "!", "?", "\n" -> d += Random.nextLong(150, 400)
+            ".", ",", "!", "?", "\n" -> d += Random.nextLong(150, 400) * pauseScale
         }
-        if (Random.nextInt(40) == 0) d += Random.nextLong(300, 900)
-        return d.toLong()
+        if (Random.nextInt(40) == 0) d += Random.nextLong(300, 900) * pauseScale
+        return Math.round(d).coerceAtLeast(1L)
     }
 }

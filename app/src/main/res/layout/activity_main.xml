@@ -49,25 +49,33 @@
             android:max="370" />
 
         <Button
-            android:id="@+id/btn_enable"
+            android:id="@+id/btn_panel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            android:text="1. Включить клавиатуру" />
+            android:text="Показать панель" />
 
         <Button
-            android:id="@+id/btn_pick"
+            android:id="@+id/btn_hide"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="2. Выбрать клавиатуру" />
+            android:text="Убрать панель" />
 
-        <EditText
-            android:id="@+id/test_field"
+        <TextView
+            android:id="@+id/setup_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            android:hint="Поле для проверки: нажмите сюда"
-            android:inputType="textMultiLine" />
+            android:lineSpacingExtra="4dp"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:lineSpacingExtra="4dp"
+            android:text="Как пользоваться: нажмите «Показать панель», откройте нужное приложение, нажмите на поле ввода и затем ▶ на панели. ■ — пауза (▶ продолжит с этого места), долгое нажатие на ▶ — печатать заново с начала. ✥ — перетащить панель."
+            android:textSize="13sp" />
     </LinearLayout>
 </ScrollView>

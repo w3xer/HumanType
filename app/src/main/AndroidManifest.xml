@@ -18,13 +18,6 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".PickerActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:noHistory="true"
-            android:taskAffinity=""
-            android:theme="@style/Theme.HumanType.Picker" />
 
         <service
             android:name=".OverlayService"

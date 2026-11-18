@@ -7,7 +7,9 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
@@ -15,6 +17,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -30,6 +33,10 @@ class OverlayService : Service() {
     private lateinit var params: WindowManager.LayoutParams
     private lateinit var playBtn: TextView
     private lateinit var statusView: TextView
+    private val handler = Handler(Looper.getMainLooper())
+
+    /** Невидимое поле ввода: на время показа окна выбора клавиатуры панель «владеет» редактором. */
+    private var hiddenInput: EditText? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -46,6 +53,8 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        hiddenInput = null
         TypingService.listener = null
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
@@ -96,13 +105,24 @@ class OverlayService : Service() {
         // Порядок сверху вниз: ▶, статус, ⌨, ⚙, ✕ (виден только в свёрнутом виде), ✥ (внизу)
         listOf(playBtn, statusView, keyboard, settings, close, drag).forEach { root.addView(it) }
 
+        // Скрытое поле для showPicker(): 1×1 пиксель, не видно и не перехватывает касания.
+        hiddenInput = EditText(this).apply {
+            layoutParams = LinearLayout.LayoutParams(1, 1)
+            background = null
+            alpha = 0f
+            isFocusable = true
+            isFocusableInTouchMode = true
+            showSoftInputOnFocus = false
+        }.also { root.addView(it) }
+
         // В свёрнутом виде остаются только ✕ и ✥. Печать при этом продолжается:
         // она живёт в TypingService и от панели не зависит. Останавливается она только
         // когда панель закрыта совсем (см. onDestroy).
         val hideWhenCollapsed = listOf(playBtn, statusView, keyboard, settings)
         // высота, которую даёт скрытие: ▶ + статус + ⌨ + ⚙ минус ✕
         val collapseShift = dp(52 + 24 + 52 + 52 - 52)
-        var collapsed = prefs.getBoolean("panel_collapsed", false)
+        // Панель всегда открывается полной, как бы её ни закрывали в прошлый раз.
+        var collapsed = false
 
         fun applyCollapsed() {
             hideWhenCollapsed.forEach { it.visibility = if (collapsed) View.GONE else View.VISIBLE }
@@ -159,10 +179,11 @@ class OverlayService : Service() {
                         applyCollapsed()
                         wm.updateViewLayout(root, params)
                     }
+                    // Позиция сохраняется как для полной панели, чтобы свёрнутый сдвиг
+                    // не накапливался при следующем открытии.
                     prefs.edit()
                         .putInt("panel_x", params.x)
-                        .putInt("panel_y", params.y)
-                        .putBoolean("panel_collapsed", collapsed)
+                        .putInt("panel_y", if (collapsed) params.y - collapseShift else params.y)
                         .apply()
                     true
                 }
@@ -211,18 +232,44 @@ class OverlayService : Service() {
     }
 
     /**
-     * Окно выбора клавиатуры открывается через невидимую PickerActivity: у неё есть фокус окна,
-     * поэтому система не игнорирует вызов (из окна панели он срабатывал не всегда).
+     * Система показывает окно выбора клавиатуры, только если вызов пришёл от приложения,
+     * у которого сейчас есть активное поле ввода. Пока открыто наше приложение, оно есть;
+     * вне приложения — нет, и вызов молча игнорировался.
+     *
+     * Поэтому на короткое время окно панели становится фокусным и получает скрытое поле ввода,
+     * затем открывается окно выбора, и панель снова перестаёт брать фокус на себя.
      */
     private fun showPicker() {
         rememberPreviousKeyboard()
-        val launched = runCatching {
-            startActivity(Intent(this, PickerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }.isSuccess
-        if (!launched) {
-            runCatching {
-                (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
-            }
+        val view = panel
+        val input = hiddenInput
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        if (view == null || input == null) {
+            runCatching { imm.showInputMethodPicker() }
+            return
+        }
+
+        handler.removeCallbacksAndMessages(null)
+        runCatching {
+            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN or
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+            wm.updateViewLayout(view, params)
+            input.requestFocus()
+        }
+        // даём системе время передать фокус окну панели и принять поле ввода
+        handler.postDelayed({
+            runCatching { imm.showInputMethodPicker() }
+            handler.postDelayed({ restoreNotFocusable() }, 400)
+        }, 250)
+    }
+
+    private fun restoreNotFocusable() {
+        val view = panel ?: return
+        runCatching {
+            hiddenInput?.clearFocus()
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            wm.updateViewLayout(view, params)
         }
     }
 }

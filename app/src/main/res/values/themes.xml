@@ -3,8 +3,4 @@
         <item name="colorPrimary">#3B6EF5</item>
     </style>
 
-    <!-- Прозрачная тема для PickerActivity (она ничего не рисует) -->
-    <style name="Theme.HumanType.Picker" parent="@android:style/Theme.Translucent.NoTitleBar">
-        <item name="android:windowAnimationStyle">@null</item>
-    </style>
 </resources>

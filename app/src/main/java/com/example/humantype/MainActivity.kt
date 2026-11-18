@@ -134,7 +134,6 @@ class MainActivity : AppCompatActivity() {
             }
             else -> {
                 startService(Intent(this, OverlayService::class.java))
-                moveTaskToBack(true)
             }
         }
     }

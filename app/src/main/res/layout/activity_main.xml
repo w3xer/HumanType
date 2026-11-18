@@ -85,12 +85,5 @@
             android:lineSpacingExtra="4dp"
             android:textSize="14sp" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:lineSpacingExtra="4dp"
-            android:text="Как пользоваться: нажмите «Показать панель», откройте нужное приложение, нажмите на поле ввода и затем ▶ на панели. ■ — пауза (▶ продолжит с этого места), долгое нажатие на ▶ — печатать заново с начала. ✥ — перетащить панель."
-            android:textSize="13sp" />
     </LinearLayout>
 </ScrollView>

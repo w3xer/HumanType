@@ -7,6 +7,7 @@ import android.os.Looper
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.inputmethod.InputMethodManager
+import android.widget.Toast
 import kotlin.random.Random
 
 /**
@@ -93,32 +94,71 @@ class TypingService : InputMethodService() {
      */
     fun onPanelClosed() {
         stopTyping("")
-        val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: ""
-        if (!current.startsWith("$packageName/")) return
-        val previous = getSharedPreferences("humantype", MODE_PRIVATE).getString("prev_ime", null)
+        restoring = true
+        restoreKeyboard(0)
+    }
+
+    /** Панель открыли снова — незавершённое переключение на прежнюю клавиатуру больше не нужно. */
+    fun cancelRestore() {
+        restoring = false
+        handler.removeCallbacks(restoreStep)
+    }
+
+    private var restoring = false
+    private var restoreAttempt = 0
+    private val restoreStep = Runnable { restoreKeyboard(restoreAttempt + 1) }
+
+    private fun isOurKeyboardSelected(): Boolean =
+        (Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: "")
+            .startsWith("$packageName/")
+
+    /**
+     * Система не даёт обычному приложению менять клавиатуру напрямую, а клавиатура может
+     * переключить себя только на другую. Одного вызова бывает мало (на части телефонов он
+     * молча игнорируется), поэтому пробуем по очереди несколько способов и после каждой
+     * попытки проверяем, что HumanType действительно больше не выбрана.
+     */
+    private fun restoreKeyboard(attempt: Int) {
+        restoreAttempt = attempt
+        if (!restoring) return
+        if (!isOurKeyboardSelected()) {
+            restoring = false
+            return
+        }
+        if (attempt > 3) {
+            restoring = false
+            Toast.makeText(this, "Выберите обычную клавиатуру вручную", Toast.LENGTH_LONG).show()
+            return
+        }
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        val saved = getSharedPreferences("humantype", MODE_PRIVATE).getString("prev_ime", null)
+        // запомненная клавиатура должна всё ещё быть включена
+        val previous = saved?.takeIf { id -> imm.enabledInputMethodList.any { it.id == id } }
         runCatching {
             when {
-                previous != null && Build.VERSION.SDK_INT >= 28 -> switchInputMethod(previous)
-                previous != null -> {
+                attempt <= 1 && previous != null && Build.VERSION.SDK_INT >= 28 -> switchInputMethod(previous)
+                attempt <= 1 && previous != null -> {
                     @Suppress("DEPRECATION")
-                    (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-                        .setInputMethod(window?.window?.attributes?.token, previous)
+                    imm.setInputMethod(window?.window?.attributes?.token, previous)
                 }
-                // прежняя клавиатура не запомнена (выбрали HumanType до этого обновления)
-                Build.VERSION.SDK_INT >= 28 -> {
+                attempt <= 2 -> {
                     @Suppress("DEPRECATION")
                     switchToPreviousInputMethod()
                 }
-                else -> Unit
+                else -> {
+                    @Suppress("DEPRECATION")
+                    switchToNextInputMethod(false)
+                }
             }
         }
+        handler.postDelayed(restoreStep, 400)
     }
 
     private fun begin(restart: Boolean) {
         if (running) return
         val prefs = getSharedPreferences("humantype", MODE_PRIVATE)
         val newText = (prefs.getString("text", "") ?: "").replace("\r\n", "\n")
-        speed = prefs.getInt("speed", 120)
+        speed = prefs.getInt("speed", 20).coerceIn(1, 60)
         if (newText.isEmpty()) {
             publish("Нет текста")
             return
@@ -149,9 +189,9 @@ class TypingService : InputMethodService() {
     private fun nextDelay(ch: String): Long {
         var d = speed * Random.nextDouble(0.6, 1.4)
         // «Человеческие» паузы на знаках препинания и случайные задумчивости уменьшаются вместе
-        // с задержкой: на 120 мс и больше они прежние, на малых значениях (вплоть до 1 мс)
+        // с задержкой: на максимальных 60 мс они полные, на малых значениях (вплоть до 1 мс)
         // не мешают быстрой печати.
-        val pauseScale = (speed / 120.0).coerceAtMost(1.0)
+        val pauseScale = (speed / 60.0).coerceAtMost(1.0)
         when (ch) {
             " " -> d += speed * 0.5
             ".", ",", "!", "?", "\n" -> d += Random.nextLong(150, 400) * pauseScale

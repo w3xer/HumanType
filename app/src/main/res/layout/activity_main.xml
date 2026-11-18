@@ -17,22 +17,40 @@
             android:textSize="28sp"
             android:textStyle="bold" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="Текст для печати"
-            android:textSize="16sp" />
-
         <EditText
             android:id="@+id/text_input"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="20dp"
             android:gravity="top"
             android:hint="Вставьте сюда любой текст"
             android:inputType="textMultiLine"
             android:minLines="8" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_import"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="4dp"
+                android:layout_weight="1"
+                android:text="Импорт .txt" />
+
+            <Button
+                android:id="@+id/btn_clear"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:text="Удалить текст" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/btn_more"
@@ -61,7 +79,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:max="399" />
+            android:max="59" />
 
         <Button
             android:id="@+id/btn_panel"
@@ -76,14 +94,6 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="Убрать панель" />
-
-        <TextView
-            android:id="@+id/setup_status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:lineSpacingExtra="4dp"
-            android:textSize="14sp" />
 
     </LinearLayout>
 </ScrollView>

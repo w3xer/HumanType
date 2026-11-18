@@ -46,6 +46,7 @@ class OverlayService : Service() {
             return START_NOT_STICKY
         }
         if (panel == null) {
+            TypingService.instance?.cancelRestore()
             rememberPreviousKeyboard()
             showPanel()
         }

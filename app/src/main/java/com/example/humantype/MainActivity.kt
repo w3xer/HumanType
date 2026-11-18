@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
@@ -14,26 +16,39 @@ import android.widget.EditText
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val MIN_DELAY_MS = 1
+        const val MAX_DELAY_MS = 60
         const val COLLAPSED_LINES = 5
         const val EXPANDED_MIN_LINES = 8
         const val LONG_TEXT_CHARS = 300
         const val PASTE_JUMP_CHARS = 200
+        const val MAX_IMPORT_CHARS = 500_000
+        const val CLEAR_CONFIRM_MS = 3000L
     }
 
     private lateinit var textInput: EditText
     private lateinit var btnMore: TextView
+    private lateinit var btnClear: Button
     private lateinit var speedLabel: TextView
     private lateinit var seekSpeed: SeekBar
-    private lateinit var setupStatus: TextView
 
     /** Пользователь нажал «Показать ещё» — длинный текст показан целиком. */
     private var expanded = false
+
+    /** Первое нажатие «Удалить текст» сделано, ждём подтверждения вторым нажатием. */
+    private var clearArmed = false
+    private val handler = Handler(Looper.getMainLooper())
+    private val disarmClear = Runnable { disarmClear() }
+
+    private val pickTxt = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) importText(uri)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,13 +56,14 @@ class MainActivity : AppCompatActivity() {
 
         textInput = findViewById(R.id.text_input)
         btnMore = findViewById(R.id.btn_more)
+        btnClear = findViewById(R.id.btn_clear)
         speedLabel = findViewById(R.id.speed_label)
         seekSpeed = findViewById(R.id.seek_speed)
-        setupStatus = findViewById(R.id.setup_status)
 
         val prefs = getSharedPreferences("humantype", MODE_PRIVATE)
         textInput.setText(prefs.getString("text", ""))
-        seekSpeed.progress = prefs.getInt("speed", 120).coerceAtLeast(MIN_DELAY_MS) - MIN_DELAY_MS
+        seekSpeed.max = MAX_DELAY_MS - MIN_DELAY_MS
+        seekSpeed.progress = prefs.getInt("speed", 20).coerceIn(MIN_DELAY_MS, MAX_DELAY_MS) - MIN_DELAY_MS
         updateLabel()
         applyCollapse()
 
@@ -69,6 +85,9 @@ class MainActivity : AppCompatActivity() {
             applyCollapse()
         }
 
+        findViewById<Button>(R.id.btn_import).setOnClickListener { pickTxt.launch("text/*") }
+        btnClear.setOnClickListener { onClearClicked() }
+
         seekSpeed.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) = updateLabel()
             override fun onStartTrackingTouch(bar: SeekBar?) {}
@@ -86,13 +105,73 @@ class MainActivity : AppCompatActivity() {
         // При возвращении в приложение длинный текст снова свёрнут.
         expanded = false
         applyCollapse()
-        updateSetupStatus()
     }
 
     override fun onPause() {
         super.onPause()
+        disarmClear()
         save()
     }
+
+    // ---------- импорт и удаление текста ----------
+
+    /** Читает .txt (UTF-8) и подставляет его в поле ввода вместо текущего текста. */
+    private fun importText(uri: Uri) {
+        val result = runCatching {
+            val sb = StringBuilder()
+            contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { reader ->
+                val buf = CharArray(8192)
+                while (sb.length < MAX_IMPORT_CHARS) {
+                    val n = reader.read(buf)
+                    if (n < 0) break
+                    sb.append(buf, 0, n)
+                }
+            } ?: error("no stream")
+            sb
+        }
+        val sb = result.getOrNull()
+        if (sb == null) {
+            Toast.makeText(this, "Не удалось прочитать файл", Toast.LENGTH_LONG).show()
+            return
+        }
+        var text = sb.toString().removePrefix("﻿")
+        if (text.length > MAX_IMPORT_CHARS) {
+            text = text.substring(0, MAX_IMPORT_CHARS)
+            Toast.makeText(this, "Файл слишком большой, загружено $MAX_IMPORT_CHARS символов", Toast.LENGTH_LONG).show()
+        } else if (text.isEmpty()) {
+            Toast.makeText(this, "Файл пустой", Toast.LENGTH_SHORT).show()
+            return
+        }
+        disarmClear()
+        textInput.setText(text)
+        expanded = false
+        applyCollapse()
+        save()
+    }
+
+    /** Удаление в два нажатия: первое просит подтверждение, второе стирает текст. */
+    private fun onClearClicked() {
+        if (textInput.text.isNullOrEmpty()) return
+        if (!clearArmed) {
+            clearArmed = true
+            btnClear.text = "Нажмите ещё раз"
+            handler.postDelayed(disarmClear, CLEAR_CONFIRM_MS)
+        } else {
+            disarmClear()
+            textInput.setText("")
+            expanded = false
+            applyCollapse()
+            save()
+        }
+    }
+
+    private fun disarmClear() {
+        handler.removeCallbacks(disarmClear)
+        clearArmed = false
+        btnClear.text = "Удалить текст"
+    }
+
+    // ---------- поле ввода ----------
 
     private fun isLong(s: CharSequence): Boolean =
         s.length > LONG_TEXT_CHARS || s.count { it == '\n' } >= COLLAPSED_LINES
@@ -141,17 +220,6 @@ class MainActivity : AppCompatActivity() {
     private fun isKeyboardEnabled(): Boolean =
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .enabledInputMethodList.any { it.packageName == packageName }
-
-    private fun isKeyboardSelected(): Boolean =
-        (Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: "")
-            .startsWith("$packageName/")
-
-    private fun updateSetupStatus() {
-        fun mark(ok: Boolean) = if (ok) "✓" else "✗"
-        setupStatus.text = "${mark(Settings.canDrawOverlays(this))} Показ поверх приложений\n" +
-            "${mark(isKeyboardEnabled())} Клавиатура HumanType включена\n" +
-            "${mark(isKeyboardSelected())} Клавиатура выбрана (это делается кнопкой ⌨ на панели)"
-    }
 
     private fun updateLabel() {
         speedLabel.text = "Задержка между символами: ~${seekSpeed.progress + MIN_DELAY_MS} мс"
